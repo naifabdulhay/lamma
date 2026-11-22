@@ -222,7 +222,7 @@ const Host = (() => {
         <div class="code"><span>أو ادخلوا بالرمز</span><b>${S.room}</b></div>
         <p class="url" dir="ltr">${U.esc(joinURL().replace(/^https?:\/\//, ''))}</p>
         ${location.protocol === 'file:' ? '<p class="warn">الملف مفتوح من جهازك، لذا لن تفتح الجوالات الرابط. ارفعه على رابط إنترنت أولًا (الطريقة في رسالة التسليم).</p>' : ''}
-        <p class="netline ${S.net}">${{ online: 'متصل وجاهز لاستقبال اللاعبين', connecting: 'جارٍ الاتصال…', offline: 'انقطع الاتصال، نعيد المحاولة…', fail: 'تعذّر الاتصال بخادم الربط. تأكد من الإنترنت ثم حدّث الصفحة.' }[S.net] || ''}</p></div>
+        <p class="netline ${S.net}">${netText()}</p></div>
       <div class="side"><h1 class="title">تحدّي<br>اللمّة</h1><p class="lead">كل واحد يجيب من جواله. جولات من ١٠ أسئلة منوعة، والأسرع يكسب نقاطًا أكثر.</p>
         <div class="plist" id="plist">${playersHTML()}</div>
         <details class="settings"><summary>إعدادات اللعبة</summary>
@@ -236,6 +236,7 @@ const Host = (() => {
         <div class="golist"><button class="go" data-act="start" ${plist().length ? '' : 'disabled'}>ابدأ اللعب</button><button class="linkbtn" data-act="bot">+ لاعب تجريبي (للتجربة)</button></div>
       </div></section>`;
   }
+  function netText() { return ({ online: `متصل وجاهز لاستقبال اللاعبين (${S.nl > 2 ? 'عبر ' + U.ar(S.nl) + ' خوادم ربط' : S.nl === 2 ? 'عبر خادمَي ربط' : 'عبر خادم ربط واحد'})`, connecting: 'جارٍ الاتصال…', offline: 'انقطع الاتصال، نعيد المحاولة…', fail: 'تعذّر الاتصال بخوادم الربط. تأكد من الإنترنت ثم حدّث الصفحة.' })[S.net] || '' }
   function playersHTML() {
     const ps = plist();
     if (!ps.length) return `<p class="empty">بانتظار أول لاعب… كل من يمسح الباركود يظهر اسمه هنا.</p>`;
@@ -345,11 +346,13 @@ const Host = (() => {
     else S.room = U.uid(5).toUpperCase().replace(/[^A-Z0-9]/g, 'X');
     AU.on = S.settings.sfx;
     root.addEventListener('click', onClick); root.addEventListener('change', onChange); document.addEventListener('keydown', onKey);
+    const wake = () => { try { navigator.wakeLock && document.visibilityState === 'visible' && navigator.wakeLock.request('screen').catch(() => { }) } catch (e) { } };
+    wake(); document.addEventListener('visibilitychange', wake);
     S.phase = sv && S.round ? 'rend' : 'lobby';
     if (S.phase === 'rend') S.board = boardData(false);
     render();
-    net = new Net(S.room, 'host', onMsg, st => { S.net = st; const n = $('.net'); if (n) n.className = 'net ' + st; const l = $('.netline'); if (l && S.phase === 'lobby') render() });
-    const i = await net.connect(S.b);
+    net = new Net(S.room, 'host', onMsg, (st, n) => { const ch = st !== S.net || n !== S.nl; S.net = st; S.nl = n; const d = $('.net'); if (d) d.className = 'net ' + st; if (ch && S.phase === 'lobby') { const l = $('.netline'); if (l) { l.className = 'netline ' + st; l.textContent = netText() } } });
+    const i = await net.connectAll();
     if (i >= 0) { const changed = i !== S.b; S.b = i; save(); if (S.phase === 'lobby' || changed) render() }
     let sig = '';
     setInterval(() => { publish(); if (S.phase === 'lobby') { const n = plist().map(p => p.id + alive(p)).join(); if (n !== sig) { sig = n; const e = $('#plist'); if (e) e.innerHTML = playersHTML() } } }, 3000);

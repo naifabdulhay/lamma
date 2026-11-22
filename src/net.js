@@ -1,18 +1,22 @@
 /* ===== Realtime link between the main screen and phones (MQTT over secure WebSocket) ===== */
 const QS = new URLSearchParams(location.search);
-const BROKERS = QS.get('broker') ? [QS.get('broker')] : [
+const BROKERS = QS.get('broker') ? QS.get('broker').split(',') : [
+  'wss://mqtt.eclipseprojects.io:443/mqtt',
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt',
   'wss://test.mosquitto.org:8081/mqtt'
 ];
 const TOPIC = 'lamma-family-quiz/v1/';
+/* Host listens and speaks on every relay it can reach; a phone uses one relay and
+   moves to the next one if it does not hear the main screen. */
 class Net {
-  constructor(room, side, onMsg, onStatus) { Object.assign(this, { room, side, onMsg, onStatus, c: null, idx: -1, ok: false }) }
+  constructor(room, side, onMsg, onStatus) { Object.assign(this, { room, side, onMsg, onStatus, links: [], cur: null, heard: 0, since: 0, k: 0, busy: false }) }
+  get inT() { return TOPIC + this.room + (this.side === 'host' ? '/p' : '/h') }
+  get outT() { return TOPIC + this.room + (this.side === 'host' ? '/h' : '/p') }
   _try(i) {
     return new Promise(res => {
-      let done = false; const url = BROKERS[i];
-      let c;
-      try { c = mqtt.connect(url, { clientId: 'lm_' + this.side[0] + '_' + U.uid(10), clean: true, connectTimeout: 7000, reconnectPeriod: 0, keepalive: 25, protocolVersion: 4 }) } catch (e) { return res(null) }
+      let done = false, c;
+      try { c = mqtt.connect(BROKERS[i], { clientId: 'lm_' + this.side[0] + '_' + U.uid(10), clean: true, connectTimeout: 7000, reconnectPeriod: 0, keepalive: 25, protocolVersion: 4 }) } catch (e) { return res(null) }
       const fail = () => { if (done) return; done = true; try { c.end(true) } catch (e) { } res(null) };
       const t = setTimeout(fail, 8000);
       c.on('connect', () => { if (done) return; done = true; clearTimeout(t); res(c) });
@@ -20,30 +24,60 @@ class Net {
       c.on('close', () => { if (!done) fail() });
     });
   }
-  async connect(pref = 0) {
-    const order = [pref, ...BROKERS.map((_, i) => i).filter(i => i !== pref)].filter(i => i < BROKERS.length);
-    this.onStatus('connecting');
-    for (const i of order) {
-      const c = await this._try(i);
-      if (c) { this._attach(c, i); return i }
-      if (this.side === 'player' && this.lockBroker) break;
-    }
-    this.onStatus('fail'); return -1;
+  _wire(c) {
+    c.options.reconnectPeriod = 2000;
+    c.subscribe(this.inT, { qos: 1 });
+    c.on('message', (t, buf) => { let m; try { m = JSON.parse(buf.toString()) } catch (e) { return } if (m && typeof m === 'object') { const first = Date.now() - this.heard > 15000; this.heard = Date.now(); if (first) this._st(); this.onMsg(m) } });
+    c.on('connect', () => { c.subscribe(this.inT, { qos: 1 }); this._st() });
+    c.on('offline', () => this._st()); c.on('close', () => this._st());
   }
-  _attach(c, i) {
-    this.c = c; this.idx = i; this.ok = true;
-    c.options.reconnectPeriod = 1500;
-    const inTopic = TOPIC + this.room + (this.side === 'host' ? '/p' : '/h');
-    c.subscribe(inTopic, { qos: 1 });
-    c.on('message', (t, buf) => { let m; try { m = JSON.parse(buf.toString()) } catch (e) { return } if (m && typeof m === 'object') this.onMsg(m) });
-    c.on('connect', () => { this.ok = true; c.subscribe(inTopic, { qos: 1 }); this.onStatus('online') });
-    c.on('offline', () => { this.ok = false; this.onStatus('offline') });
-    c.on('reconnect', () => this.onStatus('connecting'));
-    this.onStatus('online');
+  _st() {
+    if (this.side === 'host') { const n = this.links.filter(l => l.c.connected).length; this.onStatus(n ? 'online' : 'offline', n); return }
+    const ok = this.cur && this.cur.c.connected;
+    this.onStatus(!ok ? 'connecting' : Date.now() - this.heard < 15000 ? 'online' : 'searching');
+  }
+  /* host: every relay in parallel; resolves with the first one that answers */
+  connectAll() {
+    this.onStatus('connecting', 0);
+    return new Promise(res => {
+      let left = BROKERS.length, first = -1;
+      BROKERS.forEach((_, i) => this._try(i).then(c => {
+        left--;
+        if (c) { this.links.push({ c, i }); this._wire(c); this._st(); if (first < 0) { first = i; res(i) } }
+        if (!left && first < 0) { this.onStatus('fail', 0); res(-1) }
+      }));
+      setInterval(() => this._st(), 4000);
+    });
+  }
+  /* phone: one relay at a time, rotate while the main screen is silent */
+  async connect(pref = 0) {
+    this.order = [pref, ...BROKERS.map((_, i) => i).filter(i => i !== pref)].filter(i => i < BROKERS.length);
+    this.k = 0; await this._next();
+    setInterval(() => this._watch(), 1500);
+  }
+  async _next() {
+    if (this.busy) return; this.busy = true;
+    if (this.cur) { try { this.cur.c.end(true) } catch (e) { } this.cur = null }
+    this.onStatus('connecting');
+    for (let n = 0; n < this.order.length; n++) {
+      const i = this.order[this.k % this.order.length];
+      const c = await this._try(i);
+      if (c) { this.cur = { c, i }; this.since = Date.now(); this._wire(c); this.busy = false; this._st(); this.onLink && this.onLink(); return }
+      this.k++;
+    }
+    this.busy = false; this.onStatus('fail');
+    setTimeout(() => this._next(), 4000);
+  }
+  _watch() {
+    this._st();
+    if (!this.cur || this.busy) return;
+    const quiet = Date.now() - Math.max(this.heard, this.since);
+    if (quiet > (this.heard ? 16000 : 7000)) { this.k++; this.heard = 0; this._next() }
   }
   send(o) {
-    if (!this.c) return;
-    try { this.c.publish(TOPIC + this.room + (this.side === 'host' ? '/h' : '/p'), JSON.stringify(o), { qos: 1 }) } catch (e) { }
+    const s = JSON.stringify(o);
+    if (this.side === 'host') { this.links.forEach(l => { if (l.c.connected) try { l.c.publish(this.outT, s, { qos: 1 }) } catch (e) { } }); return }
+    if (this.cur && this.cur.c.connected) try { this.cur.c.publish(this.outT, s, { qos: 1 }) } catch (e) { }
   }
 }
 

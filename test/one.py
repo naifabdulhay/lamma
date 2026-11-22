@@ -6,7 +6,7 @@ async def main():
     async with async_playwright() as p:
         b=await p.chromium.launch(); h=await (await b.new_context(viewport={'width':vw,'height':vh})).new_page()
         errs=[]; h.on('pageerror',lambda e:errs.append(str(e)))
-        await h.goto(B+'?broker='+BR+'&force='+force); await h.click('[data-go="host"]')
+        await h.goto(B+'?broker='+BR+'&force='+force); await h.click('[data-go="host"]'); await h.fill('.pinbox input','1234'); await h.click('.pinbox button[type=submit]')
         await h.wait_for_selector('.netline.online'); code=(await h.locator('.code b').inner_text()).strip()
         await h.screenshot(path='test/out/one_lobby.png')
         ph=await (await b.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True)).new_page()

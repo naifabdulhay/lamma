@@ -59,7 +59,7 @@ async def main():
         await host.goto(BASE + '?broker=' + BROKER + ('&force=' + FORCE if FORCE else ''))
         await asyncio.sleep(0.6)
         await host.screenshot(path=OUT + 'h_landing.png')
-        await host.click('[data-go="host"]')
+        await host.click('[data-go="host"]'); await host.fill('.pinbox input','1234'); await host.click('.pinbox button[type=submit]')
         for _ in range(50):
             if await host.locator('.netline.online').count(): break
             await asyncio.sleep(0.2)

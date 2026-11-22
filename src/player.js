@@ -27,8 +27,8 @@ const Player = (() => {
   }
   function startNet() {
     if (net) { sendJoin(); return }
-    net = new Net(room, 'player', onMsg, s => { netState = s; const d = $('.dot'); if (d) d.className = 'dot ' + s; if (s === 'fail') renderFail(); if (s === 'online') sendJoin() });
-    net.lockBroker = false;
+    net = new Net(room, 'player', onMsg, s => { const was = netState; netState = s; const d = $('.dot'); if (d) d.className = 'dot ' + s; if (s === 'fail' && !st) renderFail(); if (s !== was && !joined) { const w = $('.wait p'); if (w) w.textContent = waitText() } });
+    net.onLink = sendJoin;
     net.connect(bIdx);
     clearInterval(joinT);
     joinT = setInterval(() => { if (!joined) sendJoin(); else net.send({ t: 'hi', id: me.id }) }, 2500);
@@ -39,9 +39,10 @@ const Player = (() => {
     const mine = st && st.ps ? st.ps.findIndex(p => p.id === me.id) : -1; const sc = mine >= 0 ? st.ps[mine].score : 0;
     return `<header class="pbar"><span class="me"><i>${me.av}</i>${U.esc(me.name)}</span><span class="sc">${U.ar(sc)} <small>نقطة</small></span><span class="dot ${netState}"></span></header>`;
   }
+  function waitText() { if (joined) return 'بانتظار المضيف ليبدأ. أبقِ الصفحة مفتوحة.'; if (netState === 'searching') return `نبحث عن الشاشة الرئيسية (الرمز ${room})… تأكد أن صفحة المضيف مفتوحة.`; if (netState === 'fail') return 'تعذّر الاتصال. تأكد من الإنترنت.'; return 'جارٍ الاتصال بالشاشة الرئيسية…' }
   function renderWait(msg) {
     const ps = st && st.ps ? st.ps : [];
-    root.innerHTML = bar() + `<section class="center wait"><div class="bigav">${me.av}</div><h2>${joined ? 'أنت داخل اللعبة!' : 'جارٍ الدخول…'}</h2><p>${msg || 'بانتظار المضيف ليبدأ. أبقِ الصفحة مفتوحة.'}</p>${ps.length ? `<div class="mini">${ps.map(p => `<span>${p.av} ${U.esc(p.name)}</span>`).join('')}</div>` : ''}<button class="linkbtn" data-act="rename">تغيير الاسم أو الشخصية</button></section>`;
+    root.innerHTML = bar() + `<section class="center wait"><div class="bigav">${me.av}</div><h2>${joined ? 'أنت داخل اللعبة!' : 'جارٍ الدخول…'}</h2><p>${msg || waitText()}</p>${ps.length ? `<div class="mini">${ps.map(p => `<span>${p.av} ${U.esc(p.name)}</span>`).join('')}</div>` : ''}<button class="linkbtn" data-act="rename">تغيير الاسم أو الشخصية</button></section>`;
   }
 
   function onMsg(m) {

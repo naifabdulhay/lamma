@@ -263,7 +263,7 @@ ol.orderlist.right li{background:var(--ok);color:#fff}
 .pbar .me i{font-style:normal;font-size:26px}
 .pbar .sc{font-weight:800;font-size:20px;white-space:nowrap}.pbar small{font-size:13px;font-weight:600}
 .dot{width:12px;height:12px;border-radius:50%;background:#aaa;border:2px solid var(--ink)}
-.dot.online{background:var(--ok)}.dot.connecting{background:#F7B500;animation:blink 1s infinite}.dot.offline,.dot.fail{background:var(--no)}
+.dot.online{background:var(--ok)}.dot.connecting,.dot.searching{background:#F7B500;animation:blink 1s infinite}.dot.offline,.dot.fail{background:var(--no)}
 .join{padding:24px 18px;display:grid;gap:10px}
 .join .brand{justify-content:center}
 .join h1{margin:8px 0 0;font-size:40px;text-align:center;line-height:1.1}.join>p{text-align:center;margin:0;font-size:18px}
@@ -347,3 +347,11 @@ ol.orderlist.right li{background:var(--ok);color:#fff}
   .opt{font-size:20px;min-height:58px;padding:8px 14px}.qmain.nomedia .opt{min-height:70px;font-size:22px}
   .opts{grid-template-columns:1fr}.strip .av em{display:none}
 }
+
+.pinwrap{position:fixed;inset:0;background:rgba(29,26,43,.55);display:grid;place-items:center;z-index:30;padding:16px}
+.pinbox{background:var(--card);border:4px solid var(--ink);border-radius:24px;padding:22px;display:grid;gap:8px;width:min(100%,360px);box-shadow:0 8px 0 var(--ink);text-align:center}
+.pinbox b{font-size:26px}.pinbox span{color:var(--muted)}
+.pinbox input{font:800 34px/1 "Baloo Bhaijaan 2",sans-serif;letter-spacing:.4em;text-align:center;border:3px solid var(--ink);border-radius:14px;padding:10px;min-height:60px;width:100%}
+.pinbox .row{display:flex;gap:10px;justify-content:center;align-items:center}
+.shake{animation:shake .35s}
+@keyframes shake{25%{transform:translateX(8px)}50%{transform:translateX(-8px)}75%{transform:translateX(5px)}}
