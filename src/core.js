@@ -168,7 +168,7 @@ function renderMedia(m, opt = {}) {
     case 'verse': return `<div class="verse"><span>${U.esc(m.s)}</span><span>${U.esc(m.e).replace('……', '<b class="gap">……</b>')}</span></div>`;
     case 'quote': return `<div class="quote">${U.esc(m.t)}</div>`;
     case 'story': return `<ol class="story">${m.steps.map(s => `<li class="${s === '؟' ? 'q' : ''}">${U.esc(s)}</li>`).join('')}</ol>`;
-    case 'sound': return `<div class="sound"><div class="eq">${'<i></i>'.repeat(7)}</div><p>${opt.player ? 'استمعوا للشاشة الرئيسية' : 'استمعوا جيدًا…'}</p>${m.labels ? `<div class="tonelbl">${m.labels.map((l, i) => `<span data-t="${i}">${l}</span>`).join('')}</div>` : ''}</div>`;
+    case 'sound': return `<div class="sound"><div class="eq">${'<i></i>'.repeat(7)}</div><p>${opt.snd ? 'ارفع صوت جوالك واستمع' : opt.player ? 'استمعوا للشاشة الرئيسية' : 'استمعوا جيدًا…'}</p>${m.labels ? `<div class="tonelbl">${m.labels.map((l, i) => `<span data-t="${i}">${l}</span>`).join('')}</div>` : ''}</div>`;
     case 'simon': return `<div class="simon show">${SIMON.map((c, i) => `<span data-p="${i}" style="--c:${c}"></span>`).join('')}</div>`;
     case 'reflex': return `<div class="reflex"><span>انتظر حتى يصبح أخضر…</span></div>`;
     case 'cover': return `<div class="cover">؟</div>`;

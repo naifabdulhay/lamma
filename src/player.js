@@ -3,7 +3,7 @@ const Player = (() => {
   const LSK = 'lamma_me_v1';
   let me = {}; try { me = JSON.parse(localStorage.getItem(LSK) || '{}') } catch (e) { }
   const saveMe = () => { try { localStorage.setItem(LSK, JSON.stringify(me)) } catch (e) { } };
-  let net, root, room, bIdx = 0, st = null, joined = false, joinT = 0, key = '', q = null, qT0 = 0, my = null, raf = 0, preDone = false, orderSel = [], seqSel = [], numVal = '', netState = 'connecting', reflexGreen = false;
+  let isLocal = false, net, root, room, bIdx = 0, st = null, joined = false, joinT = 0, key = '', q = null, qT0 = 0, my = null, raf = 0, preDone = false, orderSel = [], seqSel = [], numVal = '', netState = 'connecting', reflexGreen = false;
   const $ = s => root.querySelector(s);
   const pnow = () => performance.now();
 
@@ -14,6 +14,29 @@ const Player = (() => {
     root.addEventListener('pointerdown', onDown, { passive: false });
     if (me.room === room && me.name && me.id) { startNet(); renderWait() }
     else renderJoin();
+  }
+  function hostJoin(onDone) {
+    root = document.getElementById('app'); root.className = 'phone';
+    const av = me.av || U.pick(AVATARS);
+    root.innerHTML = `<section class="join"><div class="brand"><span class="logo">لمّة</span><span>تحدّي العائلة</span></div>
+      <h1>أنت المضيف</h1><p>ستلعب مع العائلة من هذا الجوال، وتبدأ اللعبة متى اكتمل الجميع.</p>
+      <form id="jf"><label>اسمك<input id="nm" maxlength="16" autocomplete="nickname" placeholder="مثلًا: أبو محمد" value="${U.esc(me.name || '')}" required></label>
+      <p class="lbl">اختر شخصيتك</p><div class="avpick">${AVATARS.map(a => `<button type="button" class="${a === av ? 'on' : ''}" data-av="${a}">${a}</button>`).join('')}</div>
+      <button class="go" type="submit">أنشئ اللعبة</button></form></section>`;
+    me.av = av;
+    root.querySelectorAll('.avpick button').forEach(b => b.onclick = () => { root.querySelectorAll('.avpick button').forEach(x => x.classList.toggle('on', x === b)); me.av = b.dataset.av });
+    $('#jf').addEventListener('submit', e => { e.preventDefault(); AU.init(); const n = $('#nm').value.replace(/\s+/g, ' ').trim(); if (!n) return; me = { ...me, name: n.slice(0, 16), id: me.id || ('p' + U.uid(11)) }; saveMe(); onDone({ id: me.id, name: me.name, av: me.av }) });
+  }
+  function bootLocal(code, meIn, send) {
+    root = document.getElementById('app'); room = code; isLocal = true;
+    if (meIn.name) me = { ...me, ...meIn };
+    else if (me.id !== meIn.id) me = { id: meIn.id, name: 'المضيف', av: AVATARS[0] };
+    me.room = room; saveMe();
+    root.addEventListener('click', onClick); root.addEventListener('pointerdown', onDown, { passive: false });
+    net = { send }; netState = 'online';
+    sendJoin(); clearInterval(joinT);
+    joinT = setInterval(() => { if (!joined) sendJoin(); else net.send({ t: 'hi', id: me.id }) }, 2500);
+    return onMsg;
   }
   function renderJoin(err) {
     const av = me.av || U.pick(AVATARS);
@@ -42,7 +65,7 @@ const Player = (() => {
   function waitText() { if (joined) return 'بانتظار المضيف ليبدأ. أبقِ الصفحة مفتوحة.'; if (netState === 'searching') return `نبحث عن الشاشة الرئيسية (الرمز ${room})… تأكد أن صفحة المضيف مفتوحة.`; if (netState === 'fail') return 'تعذّر الاتصال. تأكد من الإنترنت.'; return 'جارٍ الاتصال بالشاشة الرئيسية…' }
   function renderWait(msg) {
     const ps = st && st.ps ? st.ps : [];
-    root.innerHTML = bar() + `<section class="center wait"><div class="bigav">${me.av}</div><h2>${joined ? 'أنت داخل اللعبة!' : 'جارٍ الدخول…'}</h2><p>${msg || waitText()}</p>${ps.length ? `<div class="mini">${ps.map(p => `<span>${p.av} ${U.esc(p.name)}</span>`).join('')}</div>` : ''}<button class="linkbtn" data-act="rename">تغيير الاسم أو الشخصية</button></section>`;
+    root.innerHTML = bar() + `<section class="center wait"><div class="bigav">${me.av}</div><h2>${joined ? 'أنت داخل اللعبة!' : 'جارٍ الدخول…'}</h2><p>${msg || waitText()}</p>${ps.length ? `<div class="mini">${ps.map(p => `<span>${p.av} ${U.esc(p.name)}</span>`).join('')}</div>` : ''}${isLocal ? '' : '<button class="linkbtn" data-act="rename">تغيير الاسم أو الشخصية</button>'}</section>`;
   }
 
   function onMsg(m) {
@@ -65,6 +88,7 @@ const Player = (() => {
   function draw(m) {
     cancelAnimationFrame(raf);
     const ph = m.ph;
+    if (isLocal) { if (ph === 'lobby') return; root.className = 'phone' }
     if (ph === 'lobby') return renderWait();
     if (!joined) return renderWait('اللعبة بدأت، ستدخل مع السؤال القادم…');
     if (ph === 'intro') { root.innerHTML = bar() + `<section class="center intro"><p>استعد لـ</p><h1>الجولة ${U.ar(m.r)}</h1><p>١٠ أسئلة منوعة</p></section>`; return }
@@ -82,7 +106,7 @@ const Player = (() => {
     if (showMedia) {
       if (q.media.k === 'diff') media = renderMedia(q.media, { tap: q.input === 'tap' });
       else media = renderMedia(q.media, { tap: q.input === 'tap', player: 1 });
-    } else if (q.media && q.media.k === 'sound') media = renderMedia(q.media, { player: 1 });
+    } else if (q.media && q.media.k === 'sound') media = renderMedia(q.media, { player: 1, snd: q.snd });
     root.innerHTML = bar() + `<section class="pq in-${q.input} m-${q.media ? q.media.k : 'none'}">
       <div class="qhead"><span class="badge">${U.esc(q.cat)}</span>${q.golden ? '<span class="badge gold">×٢</span>' : ''}<span class="qn">${U.ar(m.n)}/${U.ar(m.of)}</span></div>
       <div class="tbar"><i></i></div>
@@ -92,6 +116,7 @@ const Player = (() => {
       <div class="pin ${q.pre ? 'hide' : ''}">${inputHTML()}</div>
       <div class="sent hide"></div></section>`;
     if (q.input === 'seq') simonShow(root, q, Date.now() - (pnow() - qT0));
+    if (q.snd && q.sound) { AU.init(); AU.on = true; AU.play(q.sound, i => { const e = root.querySelector(`.tonelbl [data-t="${i}"]`); if (e) { e.classList.add('on'); setTimeout(() => e.classList.remove('on'), 520) } }, (m.el || 0) / 1000) }
     loop();
   }
   function inputHTML() {
@@ -172,7 +197,9 @@ const Player = (() => {
     }
     root.innerHTML = bar() + `<section class="prev ${cls}"><div class="verdict"><h1>${head}</h1>${r && r.p ? `<p class="pts">+${U.ar(r.p)}${R.golden ? ' <small>(ذهبي ×٢)</small>' : ''}</p>` : ''}${r && r.b ? `<p class="streak">سلسلة ${U.ar(r.st)} إجابات! +${U.ar(100)}</p>` : ''}${R.fastest === me.id ? '<p class="fast">أنت الأسرع!</p>' : ''}</div>
       ${right}${R.note ? `<p class="note">${U.esc(R.note)}</p>` : ''}
-      <div class="myrank"><span>مركزك</span><b>${U.ar(rank)}</b><span>من ${U.ar(m.ps.length)}، ${U.ar(mine ? mine.score : 0)} نقطة</span></div></section>`;
+      <div class="myrank"><span>مركزك</span><b>${U.ar(rank)}</b><span>من ${U.ar(m.ps.length)}، ${U.ar(mine ? mine.score : 0)} نقطة</span></div>
+      ${R.fastest && R.fastest !== me.id && m.ps.find(p => p.id === R.fastest) ? `<p class="fastline">الأسرع: ${m.ps.find(p => p.id === R.fastest).av} ${U.esc(m.ps.find(p => p.id === R.fastest).name)}</p>` : ''}
+      <ol class="ptable top5">${m.ps.slice(0, 5).map((p, i) => `<li class="${p.id === me.id ? 'me' : ''}"><span>${U.ar(i + 1)}</span><i>${p.av}</i><em>${U.esc(p.name)}</em>${R.res[p.id] && R.res[p.id].p ? `<small>+${U.ar(R.res[p.id].p)}</small>` : ''}<b>${U.ar(p.score)}</b></li>`).join('')}</ol></section>`;
   }
   function renderBoard(m) {
     const b = m.board; const rank = b.all.findIndex(p => p.id === me.id) + 1;
@@ -184,5 +211,5 @@ const Player = (() => {
       <ol class="ptable">${b.all.slice(0, 8).map((p, i) => `<li class="${p.id === me.id ? 'me' : ''}"><span>${U.ar(i + 1)}</span><i>${p.av}</i><em>${U.esc(p.name)}</em><b>${U.ar(p.score)}</b></li>`).join('')}</ol>
       <p class="sub">${fin ? 'شكرًا للعب!' : 'بانتظار المضيف لبدء الجولة التالية…'}</p></section>`;
   }
-  return { boot };
+  return { boot, bootLocal, hostJoin };
 })();

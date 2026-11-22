@@ -355,3 +355,16 @@ ol.orderlist.right li{background:var(--ok);color:#fff}
 .pinbox .row{display:flex;gap:10px;justify-content:center;align-items:center}
 .shake{animation:shake .35s}
 @keyframes shake{25%{transform:translateX(8px)}50%{transform:translateX(-8px)}75%{transform:translateX(5px)}}
+
+.hostbar{position:fixed;inset-inline:0;bottom:0;z-index:15;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;background:var(--ink);color:#fff;padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+.hostbar .tb{background:#fff;color:var(--ink);border-color:#fff;min-height:44px;font-size:15px}
+.hostbar .tb.pri{background:var(--sun);border-color:var(--sun);font-size:17px;padding:4px 18px}
+.hostbar .cnt,.hostbar .lbl{font-weight:800;margin-inline-end:auto}
+body.hasbar #app{padding-bottom:78px}
+#app.host.play{height:auto;min-height:100vh;overflow:visible}
+.title.sm{font-size:clamp(40px,6vw,64px)}
+.pchip.me{background:var(--ink);color:#fff}.pchip.me small{color:var(--sun)}
+.joincard .ghost.sm{font-size:16px;padding:6px 16px;margin-top:8px;min-height:44px}
+.fastline{text-align:center;font-weight:800;margin:0}
+.ptable.top5 li{padding:4px 10px}.ptable.top5 small{color:var(--ok);font-weight:800}
+.prev .ptable.top5 li.me small{color:var(--sun)}

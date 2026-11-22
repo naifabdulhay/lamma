@@ -107,10 +107,11 @@ const AU = {
       case 'whoosh': T(300, 0, .3, 'sawtooth', .05, 1400); break;
     }
   },
-  play(sound, onLabel) {
+  play(sound, onLabel, shift = 0) {
     if (!this.ctx || !sound) return;
-    if (sound.k === 'beeps') sound.s.forEach(b => this.tone(b.f, .5 + b.t, b.d, 'square', .13));
-    if (sound.k === 'tones') sound.s.forEach(b => { this.tone(b.f, .5 + b.t, b.d, 'sine', .3); setTimeout(() => onLabel && onLabel(b.lbl), (500 + b.t * 1000)) });
-    if (sound.k === 'simon') sound.s.forEach((p, i) => { const at = .9 + i * sound.step / 1000; this.tone(SIMON_F[p], at, .42, 'triangle', .26) });
+    const at = x => Math.max(.03, x - Math.min(shift, .45));
+    if (sound.k === 'beeps') sound.s.forEach(b => this.tone(b.f, at(.5 + b.t), b.d, 'square', .13));
+    if (sound.k === 'tones') sound.s.forEach(b => { this.tone(b.f, at(.5 + b.t), b.d, 'sine', .3); setTimeout(() => onLabel && onLabel(b.lbl), at(.5 + b.t) * 1000) });
+    if (sound.k === 'simon') sound.s.forEach((p, i) => this.tone(SIMON_F[p], at(.9 + i * sound.step / 1000), .42, 'triangle', .26));
   }
 };

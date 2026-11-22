@@ -371,6 +371,19 @@ ol.orderlist.right li{background:var(--ok);color:#fff}
 .pinbox .row{display:flex;gap:10px;justify-content:center;align-items:center}
 .shake{animation:shake .35s}
 @keyframes shake{25%{transform:translateX(8px)}50%{transform:translateX(-8px)}75%{transform:translateX(5px)}}
+
+.hostbar{position:fixed;inset-inline:0;bottom:0;z-index:15;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;background:var(--ink);color:#fff;padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+.hostbar .tb{background:#fff;color:var(--ink);border-color:#fff;min-height:44px;font-size:15px}
+.hostbar .tb.pri{background:var(--sun);border-color:var(--sun);font-size:17px;padding:4px 18px}
+.hostbar .cnt,.hostbar .lbl{font-weight:800;margin-inline-end:auto}
+body.hasbar #app{padding-bottom:78px}
+#app.host.play{height:auto;min-height:100vh;overflow:visible}
+.title.sm{font-size:clamp(40px,6vw,64px)}
+.pchip.me{background:var(--ink);color:#fff}.pchip.me small{color:var(--sun)}
+.joincard .ghost.sm{font-size:16px;padding:6px 16px;margin-top:8px;min-height:44px}
+.fastline{text-align:center;font-weight:800;margin:0}
+.ptable.top5 li{padding:4px 10px}.ptable.top5 small{color:var(--ok);font-weight:800}
+.prev .ptable.top5 li.me small{color:var(--sun)}
 </style>
 </head>
 <body>
@@ -2868,7 +2881,7 @@ function renderMedia(m, opt = {}) {
     case 'verse': return `<div class="verse"><span>${U.esc(m.s)}</span><span>${U.esc(m.e).replace('……', '<b class="gap">……</b>')}</span></div>`;
     case 'quote': return `<div class="quote">${U.esc(m.t)}</div>`;
     case 'story': return `<ol class="story">${m.steps.map(s => `<li class="${s === '؟' ? 'q' : ''}">${U.esc(s)}</li>`).join('')}</ol>`;
-    case 'sound': return `<div class="sound"><div class="eq">${'<i></i>'.repeat(7)}</div><p>${opt.player ? 'استمعوا للشاشة الرئيسية' : 'استمعوا جيدًا…'}</p>${m.labels ? `<div class="tonelbl">${m.labels.map((l, i) => `<span data-t="${i}">${l}</span>`).join('')}</div>` : ''}</div>`;
+    case 'sound': return `<div class="sound"><div class="eq">${'<i></i>'.repeat(7)}</div><p>${opt.snd ? 'ارفع صوت جوالك واستمع' : opt.player ? 'استمعوا للشاشة الرئيسية' : 'استمعوا جيدًا…'}</p>${m.labels ? `<div class="tonelbl">${m.labels.map((l, i) => `<span data-t="${i}">${l}</span>`).join('')}</div>` : ''}</div>`;
     case 'simon': return `<div class="simon show">${SIMON.map((c, i) => `<span data-p="${i}" style="--c:${c}"></span>`).join('')}</div>`;
     case 'reflex': return `<div class="reflex"><span>انتظر حتى يصبح أخضر…</span></div>`;
     case 'cover': return `<div class="cover">؟</div>`;
@@ -4513,11 +4526,12 @@ const AU = {
       case 'whoosh': T(300, 0, .3, 'sawtooth', .05, 1400); break;
     }
   },
-  play(sound, onLabel) {
+  play(sound, onLabel, shift = 0) {
     if (!this.ctx || !sound) return;
-    if (sound.k === 'beeps') sound.s.forEach(b => this.tone(b.f, .5 + b.t, b.d, 'square', .13));
-    if (sound.k === 'tones') sound.s.forEach(b => { this.tone(b.f, .5 + b.t, b.d, 'sine', .3); setTimeout(() => onLabel && onLabel(b.lbl), (500 + b.t * 1000)) });
-    if (sound.k === 'simon') sound.s.forEach((p, i) => { const at = .9 + i * sound.step / 1000; this.tone(SIMON_F[p], at, .42, 'triangle', .26) });
+    const at = x => Math.max(.03, x - Math.min(shift, .45));
+    if (sound.k === 'beeps') sound.s.forEach(b => this.tone(b.f, at(.5 + b.t), b.d, 'square', .13));
+    if (sound.k === 'tones') sound.s.forEach(b => { this.tone(b.f, at(.5 + b.t), b.d, 'sine', .3); setTimeout(() => onLabel && onLabel(b.lbl), at(.5 + b.t) * 1000) });
+    if (sound.k === 'simon') sound.s.forEach((p, i) => this.tone(SIMON_F[p], at(.9 + i * sound.step / 1000), .42, 'triangle', .26));
   }
 };
 
@@ -4526,8 +4540,10 @@ const AU = {
 const Host = (() => {
   const SAVE = 'lamma_host_v1';
   const S = { room: null, b: 0, players: {}, phase: 'lobby', round: 0, qn: 0, qs: [], q: null, qStart: 0, ans: {}, rev: null, board: null, limitMs: 0, ver: 0, net: 'connecting',
-    settings: { fams: {}, speed: 1, sfx: true, tts: false, auto: true } };
-  let net, root, timers = [], raf = 0, pubT = 0, preDone = false, lastTick = -1;
+    settings: { fams: {}, speed: 1, sfx: true, tts: false, auto: true }, mode: 'board', me: null };
+  let net, root, bar = null, local = null, timers = [], raf = 0, pubT = 0, preDone = false, lastTick = -1;
+  const play = () => S.mode === 'play';
+  const sfx = n => { if (play() && n !== 'pop') return; AU.sfx(n) };
   const $ = s => root.querySelector(s);
   const now = () => Date.now();
   const plist = () => Object.values(S.players);
@@ -4537,17 +4553,19 @@ const Host = (() => {
   const clearT = () => { timers.forEach(clearTimeout); timers = [] };
   const joinURL = () => location.origin + location.pathname + '?join=' + S.room + '&b=' + S.b + (QS.get('broker') ? '&broker=' + encodeURIComponent(QS.get('broker')) : '');
 
-  function save() { try { localStorage.setItem(SAVE, JSON.stringify({ at: now(), room: S.room, b: S.b, players: S.players, round: S.round, settings: S.settings })) } catch (e) { } }
+  function save() { try { localStorage.setItem(SAVE, JSON.stringify({ at: now(), room: S.room, b: S.b, players: S.players, round: S.round, settings: S.settings, mode: S.mode, me: S.me })) } catch (e) { } }
   function saved() { try { const s = JSON.parse(localStorage.getItem(SAVE) || 'null'); if (s && now() - s.at < 8 * 3600e3 && Object.keys(s.players || {}).length) return s } catch (e) { } return null }
 
   /* ---------- network ---------- */
   function publish() {
     const o = { t: 'st', ph: S.phase, room: S.room, r: S.round, n: S.qn, of: S.qs.length || 10, v: S.ver, ps: ranked().filter(p => !p.bot).map(p => ({ id: p.id, name: p.name, av: p.av, score: p.score })) };
     if (S.phase === 'ready' && S.q) o.q = { id: S.q.id, cat: S.q.cat, golden: !!S.q.golden };
-    if (S.phase === 'q') { const { ans, note, sound, marks, ...pub } = S.q; o.q = pub; o.el = now() - S.qStart; o.got = Object.keys(S.ans); o.lim = S.limitMs }
+    if (S.phase === 'q') { const { ans, note, sound, marks, ...pub } = S.q; o.q = pub; if (play() && sound) { o.q.sound = sound; o.q.snd = 1 } o.el = now() - S.qStart; o.got = Object.keys(S.ans); o.lim = S.limitMs }
+    o.host = S.me || null;
     if (S.phase === 'rev') o.rev = S.rev;
     if (S.phase === 'rend' || S.phase === 'final') o.board = S.board;
     net && net.send(o);
+    if (local) { const c = JSON.parse(JSON.stringify(o)); setTimeout(() => local(c)) }
   }
   const publishSoon = () => { clearTimeout(pubT); pubT = setTimeout(publish, 120) };
   function onMsg(m) {
@@ -4559,7 +4577,7 @@ const Host = (() => {
       if (!p) {
         if (plist().length >= 40) return;
         S.players[m.id] = p = { id: m.id, name, av, score: 0, streak: 0, best: 0, correct: 0, answered: 0, fast: 0, rs: 0, seen: now() };
-        AU.sfx('pop'); toast(`${av} ${name} دخل اللعبة`);
+        sfx('pop'); if (!play()) toast(`${av} ${name} دخل اللعبة`);
       } else { p.name = name; p.av = av; p.seen = now() }
       S.ver++; publish(); refreshPlayers(); save(); return;
     }
@@ -4588,7 +4606,7 @@ const Host = (() => {
   function nextRound() {
     clearT(); AU.init();
     S.round++; S.qn = 0; S.qs = QG.round(S.round, S.settings.fams); plist().forEach(p => p.rs = 0);
-    S.phase = 'intro'; S.ver++; render(); publish(); AU.sfx('fanfare');
+    S.phase = 'intro'; S.ver++; render(); publish(); sfx('fanfare');
     later(3400, nextQ);
   }
   function nextQ() {
@@ -4596,7 +4614,7 @@ const Host = (() => {
     if (S.qn >= S.qs.length) return roundEnd();
     S.q = S.qs[S.qn]; S.qn++;
     S.phase = 'ready'; S.ver++; render(); publish();
-    AU.sfx(S.q.golden ? 'gold' : 'whoosh');
+    sfx(S.q.golden ? 'gold' : 'whoosh');
     later(S.q.golden ? 3300 : 2400, startQ);
   }
   function startQ() {
@@ -4605,11 +4623,11 @@ const Host = (() => {
     S.phase = 'q'; S.ans = {}; S.qStart = now(); preDone = !q.pre; lastTick = -1;
     S.limitMs = Math.round(q.time * 1000 * (q.input === 'reflex' ? 1 : S.settings.speed));
     S.ver++; render(); publish();
-    if (q.sound) AU.play(q.sound, i => { const e = root.querySelector(`.tonelbl [data-t="${i}"]`); if (e) { e.classList.add('on'); setTimeout(() => e.classList.remove('on'), 520) } });
-    if (q.input === 'seq') simonShow(root, q, S.qStart);
-    if (S.settings.tts && 'speechSynthesis' in window && !q.sound) { try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(q.prompt.replace(/[()]/g, '')); u.lang = 'ar-SA'; u.rate = 1.02; speechSynthesis.speak(u) } catch (e) { } }
+    if (q.sound && !play()) AU.play(q.sound, i => { const e = root.querySelector(`.tonelbl [data-t="${i}"]`); if (e) { e.classList.add('on'); setTimeout(() => e.classList.remove('on'), 520) } });
+    if (q.input === 'seq' && !play()) simonShow(root, q, S.qStart);
+    if (S.settings.tts && !play() && 'speechSynthesis' in window && !q.sound) { try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(q.prompt.replace(/[()]/g, '')); u.lang = 'ar-SA'; u.rate = 1.02; speechSynthesis.speak(u) } catch (e) { } }
     later(q.pre + S.limitMs + 900, endQ);
-    loop();
+    if (!play()) loop();
     plist().filter(p => p.bot).forEach(p => botPlay(p, q));
   }
   function botPlay(p, q) {
@@ -4666,7 +4684,7 @@ const Host = (() => {
     let counts = null;
     if (q.input === 'choice') { counts = q.opts.map(() => 0); Object.values(S.ans).forEach(x => { if (typeof x.a === 'number' && counts[x.a] != null) counts[x.a]++ }) }
     S.rev = { qid: q.id, input: q.input, ans: q.ans, note: q.note || null, res, fastest, counts, marks: q.marks || null, golden: !!q.golden };
-    S.phase = 'rev'; S.ver++; render(); publish(); AU.sfx('reveal');
+    S.phase = 'rev'; S.ver++; render(); publish(); sfx('reveal');
     if (S.settings.auto) later(q.note ? 9000 : 7500, nextQ);
     save();
   }
@@ -4684,8 +4702,8 @@ const Host = (() => {
     return b;
   }
   function times(n) { return n === 1 ? 'مرة واحدة' : n === 2 ? 'مرتان' : U.ar(n) + (n <= 10 ? ' مرات' : ' مرة') }
-  function roundEnd() { clearT(); S.phase = 'rend'; S.board = boardData(false); S.ver++; render(); publish(); AU.sfx('fanfare'); save() }
-  function finish() { clearT(); stopLoop(); S.phase = 'final'; S.board = boardData(true); S.ver++; render(); publish(); AU.sfx('fanfare'); confetti(); save() }
+  function roundEnd() { clearT(); S.phase = 'rend'; S.board = boardData(false); S.ver++; render(); publish(); sfx('fanfare'); save() }
+  function finish() { clearT(); stopLoop(); S.phase = 'final'; S.board = boardData(true); S.ver++; render(); publish(); sfx('fanfare'); if (!play()) confetti(); save() }
   function toLobby() { clearT(); stopLoop(); S.phase = 'lobby'; S.round = 0; S.qn = 0; S.qs = []; plist().forEach(p => Object.assign(p, { score: 0, streak: 0, best: 0, correct: 0, answered: 0, fast: 0, rs: 0 })); S.ver++; render(); publish() }
 
   /* ---------- timer loop ---------- */
@@ -4695,7 +4713,7 @@ const Host = (() => {
     if (q.input === 'reflex') { const pad = $('.reflex'); if (pad && el >= q.d && !pad.classList.contains('go')) { pad.classList.add('go'); pad.querySelector('span').textContent = 'الآن!'; AU.sfx('go') } }
     const left = q.pre + S.limitMs - el, frac = U.clamp(left / S.limitMs, 0, 1);
     const ring = $('.ring .fg'); if (ring) ring.style.strokeDashoffset = String(283 * (1 - (el < q.pre ? 1 : frac)));
-    const tn = $('.ring b'); if (tn) { const s = Math.max(0, Math.ceil(left / 1000)); tn.textContent = el < q.pre ? '…' : U.ar(s); if (el >= q.pre && s <= 5 && s !== lastTick && s > 0 && q.input !== 'reflex') { lastTick = s; AU.sfx('tick') } $('.ring')?.classList.toggle('hot', el >= q.pre && s <= 5) }
+    const tn = $('.ring b'); if (tn) { const s = Math.max(0, Math.ceil(left / 1000)); tn.textContent = el < q.pre ? '…' : U.ar(s); if (el >= q.pre && s <= 5 && s !== lastTick && s > 0 && q.input !== 'reflex') { lastTick = s; sfx('tick') } $('.ring')?.classList.toggle('hot', el >= q.pre && s <= 5) }
     const pb = $('.prebar i'); if (pb) pb.style.width = (100 * U.clamp(1 - el / q.pre, 0, 1)) + '%';
     raf = requestAnimationFrame(loop);
   }
@@ -4706,7 +4724,7 @@ const Host = (() => {
     const pb = $('.prebar'); if (pb) pb.remove();
     const o = $('.opts'); if (o) o.classList.remove('hide');
     const h = $('.hint'); if (h) h.classList.remove('hide');
-    AU.sfx('go');
+    sfx('go');
   }
 
   /* ---------- rendering ---------- */
@@ -4726,6 +4744,7 @@ const Host = (() => {
   }
   function render() {
     const ph = S.phase; let body = '';
+    if (play()) { renderBar(); if (ph !== 'lobby') return; root.className = 'host play'; root.innerHTML = `<main class="stage ph-lobby">${lobby()}</main><div id="toasts"></div>`; return }
     if (ph === 'lobby') body = lobby();
     else if (ph === 'intro') body = `<section class="intro pop"><p>استعدوا لـ</p><h1>الجولة ${U.ar(S.round)}</h1><div class="introtypes">${S.qs.map(q => `<span>${U.esc(q.cat)}</span>`).join('')}</div><p class="sub">١٠ أسئلة، السؤال الأخير ذهبي بضعف النقاط</p></section>`;
     else if (ph === 'ready') body = `<section class="ready pop ${S.q.golden ? 'gold' : ''}"><div class="qnum">${U.ar(S.qn)}</div><h2>${S.q.golden ? 'السؤال الذهبي، النقاط مضاعفة' : 'السؤال التالي'}</h2><div class="badge big">${U.esc(S.q.cat)}</div></section>`;
@@ -4744,10 +4763,10 @@ const Host = (() => {
     return `<section class="lobby">
       <div class="joincard"><h2>امسحوا الباركود بكاميرا الجوال</h2><div class="qr">${qr}</div>
         <div class="code"><span>أو ادخلوا بالرمز</span><b>${S.room}</b></div>
-        <p class="url" dir="ltr">${U.esc(joinURL().replace(/^https?:\/\//, ''))}</p>
+        <p class="url" dir="ltr">${U.esc(joinURL().replace(/^https?:\/\//, ''))}</p><button class="ghost sm" data-act="share">مشاركة رابط الدخول</button>
         ${location.protocol === 'file:' ? '<p class="warn">الملف مفتوح من جهازك، لذا لن تفتح الجوالات الرابط. ارفعه على رابط إنترنت أولًا (الطريقة في رسالة التسليم).</p>' : ''}
         <p class="netline ${S.net}">${netText()}</p></div>
-      <div class="side"><h1 class="title">تحدّي<br>اللمّة</h1><p class="lead">كل واحد يجيب من جواله. جولات من ١٠ أسئلة منوعة، والأسرع يكسب نقاطًا أكثر.</p>
+      <div class="side">${play() ? '<h1 class="title sm">أنت المضيف</h1><p class="lead">انتظر حتى يدخل الجميع ثم اضغط «انطلق». ستلعب معهم من هذا الجوال.</p>' : '<h1 class="title">تحدّي<br>اللمّة</h1><p class="lead">كل واحد يجيب من جواله. جولات من ١٠ أسئلة منوعة، والأسرع يكسب نقاطًا أكثر.</p>'}
         <div class="plist" id="plist">${playersHTML()}</div>
         <details class="settings"><summary>إعدادات اللعبة</summary>
           <p class="lbl">أنواع الأسئلة</p><div class="chips">${Object.entries(fams).map(([k, f]) => `<button class="chip ${S.settings.fams[k] === false ? '' : 'on'}" data-fam="${k}">${f.ar}</button>`).join('')}</div>
@@ -4757,19 +4776,19 @@ const Host = (() => {
           <label class="tog"><input type="checkbox" data-set="auto" ${S.settings.auto ? 'checked' : ''}> الانتقال التلقائي بين الأسئلة</label>
           <button class="linkbtn" data-act="resetused">تصفير الأسئلة المستخدمة (${U.ar(QG.usedCount())})</button>
         </details>
-        <div class="golist"><button class="go" data-act="start" ${plist().length ? '' : 'disabled'}>ابدأ اللعب</button><button class="linkbtn" data-act="bot">+ لاعب تجريبي (للتجربة)</button></div>
+        <div class="golist"><button class="go" data-act="start" ${plist().length ? '' : 'disabled'}>${play() ? 'انطلق' : 'ابدأ اللعب'}</button><button class="linkbtn" data-act="bot">+ لاعب تجريبي (للتجربة)</button></div>
       </div></section>`;
   }
   function netText() { return ({ online: `متصل وجاهز لاستقبال اللاعبين (${S.nl > 2 ? 'عبر ' + U.ar(S.nl) + ' خوادم ربط' : S.nl === 2 ? 'عبر خادمَي ربط' : 'عبر خادم ربط واحد'})`, connecting: 'جارٍ الاتصال…', offline: 'انقطع الاتصال، نعيد المحاولة…', fail: 'تعذّر الاتصال بخوادم الربط. تأكد من الإنترنت ثم حدّث الصفحة.' })[S.net] || '' }
   function playersHTML() {
     const ps = plist();
     if (!ps.length) return `<p class="empty">بانتظار أول لاعب… كل من يمسح الباركود يظهر اسمه هنا.</p>`;
-    return `<p class="count">${U.ar(ps.length)} ${ps.length === 1 ? 'لاعب' : ps.length === 2 ? 'لاعبان' : ps.length <= 10 ? 'لاعبين' : 'لاعبًا'} — اضغط على اسم لإزالته</p><div class="avs">${ps.map(p => `<button class="pchip ${alive(p) ? '' : 'off'}" data-kick="${p.id}"><i>${p.av}</i>${U.esc(p.name)}${p.bot ? ' <small>تجريبي</small>' : ''}</button>`).join('')}</div>`;
+    return `<p class="count">${U.ar(ps.length)} ${ps.length === 1 ? 'لاعب' : ps.length === 2 ? 'لاعبان' : ps.length <= 10 ? 'لاعبين' : 'لاعبًا'} — اضغط على اسم لإزالته</p><div class="avs">${ps.map(p => p.id === S.me ? `<span class="pchip me"><i>${p.av}</i>${U.esc(p.name)} <small>المضيف</small></span>` : `<button class="pchip ${alive(p) ? '' : 'off'}" data-kick="${p.id}"><i>${p.av}</i>${U.esc(p.name)}${p.bot ? ' <small>تجريبي</small>' : ''}</button>`).join('')}</div>`;
   }
   function refreshPlayers() { const e = $('#plist'); if (e) e.innerHTML = playersHTML(); const g = $('[data-act="start"]'); if (g) g.disabled = !plist().length; if (S.phase === 'q') { const st = $('.strip'); if (st) st.innerHTML = stripHTML() } }
   function wireLobby() { }
   const stripHTML = () => { const ps = plist(); const n = Object.keys(S.ans).length; return `<span class="cnt">${U.ar(n)}/${U.ar(ps.length)} أجابوا</span>${ps.map(p => avatar(p, S.ans[p.id] ? 'in' : '')).join('')}` };
-  function markIn(id) { const e = root.querySelector(`.strip .av[data-id="${id}"]`); if (e) e.classList.add('in'); const c = $('.strip .cnt'); if (c) c.textContent = `${U.ar(Object.keys(S.ans).length)}/${U.ar(plist().length)} أجابوا`; AU.sfx('tock') }
+  function markIn(id) { if (bar) { const c = bar.querySelector('.cnt'); if (c) c.textContent = `أجاب ${U.ar(Object.keys(S.ans).length)} من ${U.ar(plist().length)}` } if (play()) return; const e = root.querySelector(`.strip .av[data-id="${id}"]`); if (e) e.classList.add('in'); const c = $('.strip .cnt'); if (c) c.textContent = `${U.ar(Object.keys(S.ans).length)}/${U.ar(plist().length)} أجابوا`; AU.sfx('tock') }
 
   function qScreen(rev) {
     const q = S.q, R = S.rev;
@@ -4852,6 +4871,7 @@ const Host = (() => {
       case 'auto': S.settings.auto = !S.settings.auto; t.textContent = S.settings.auto ? 'انتقال تلقائي' : 'انتقال يدوي'; if (S.settings.auto && S.phase === 'rev') later(2500, nextQ); save(); break;
       case 'fs': try { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen() } catch (e) { } break;
       case 'resetused': QG.resetUsed(); t.textContent = 'تم تصفير الأسئلة المستخدمة'; break;
+      case 'share': { const u = joinURL(); if (navigator.share) navigator.share({ title: 'تحدّي اللمّة', text: 'ادخل لعبة تحدّي اللمّة (الرمز ' + S.room + ')', url: u }).catch(() => { }); else if (navigator.clipboard) navigator.clipboard.writeText(u).then(() => toast('تم نسخ رابط الدخول'), () => { }); break }
     }
   }
   function onChange(e) { const k = e.target.dataset.set; if (!k) return; S.settings[k] = e.target.checked; if (k === 'sfx') AU.on = e.target.checked; save() }
@@ -4861,19 +4881,34 @@ const Host = (() => {
     if (e.key === 'f' || e.key === 'F') onClick({ target: Object.assign(document.createElement('button'), { dataset: { act: 'fs' } }) });
   }
 
-  async function boot(resume) {
+  function renderBar() {
+    if (!bar) return; const ph = S.phase; let h = '';
+    const end = `<button class="tb" data-act="end">إنهاء اللعبة</button>`;
+    if (ph === 'lobby') h = '';
+    else if (ph === 'intro' || ph === 'ready') h = `<span class="lbl">المضيف</span>${end}`;
+    else if (ph === 'q') h = `<span class="cnt">أجاب ${U.ar(Object.keys(S.ans).length)} من ${U.ar(plist().length)}</span><button class="tb" data-act="skip">إنهاء السؤال</button>`;
+    else if (ph === 'rev') h = `<button class="tb pri" data-act="next">التالي ←</button><button class="tb" data-act="auto">${S.settings.auto ? 'انتقال تلقائي' : 'انتقال يدوي'}</button>${end}`;
+    else if (ph === 'rend') h = `<button class="tb pri" data-act="nextround">الجولة ${U.ar(S.round + 1)} ←</button>${end}`;
+    else if (ph === 'final') h = `<button class="tb pri" data-act="again">لعبة جديدة</button>`;
+    bar.innerHTML = h; bar.classList.toggle('hide', !h); document.body.classList.toggle('hasbar', !!h);
+  }
+  async function boot(resume, mode = 'board', me = null) {
     root = document.getElementById('app'); root.className = 'host';
+    S.mode = mode;
+    if (play()) { bar = document.createElement('div'); bar.id = 'hostbar'; bar.className = 'hostbar hide'; document.body.appendChild(bar); bar.addEventListener('click', onClick) }
     let tab = null; try { tab = sessionStorage.getItem('lamma_tab') } catch (e) { }
     const sv = (resume || tab) ? saved() : null;
     try { sessionStorage.setItem('lamma_tab', '1') } catch (e) { }
-    if (sv) { S.room = sv.room; S.b = sv.b; S.players = sv.players; S.round = sv.round; S.settings = Object.assign(S.settings, sv.settings); plist().forEach(p => p.seen = now()) }
+    if (sv && (sv.mode || 'board') !== mode) { /* different mode: start fresh */ }
+    if (sv && (sv.mode || 'board') === mode) { S.room = sv.room; S.b = sv.b; S.players = sv.players; S.round = sv.round; S.settings = Object.assign(S.settings, sv.settings); if (play() && sv.me) me = me || { id: sv.me }; plist().forEach(p => p.seen = now()) }
     else S.room = U.uid(5).toUpperCase().replace(/[^A-Z0-9]/g, 'X');
     AU.on = S.settings.sfx;
     root.addEventListener('click', onClick); root.addEventListener('change', onChange); document.addEventListener('keydown', onKey);
     const wake = () => { try { navigator.wakeLock && document.visibilityState === 'visible' && navigator.wakeLock.request('screen').catch(() => { }) } catch (e) { } };
     wake(); document.addEventListener('visibilitychange', wake);
-    S.phase = sv && S.round ? 'rend' : 'lobby';
+    S.phase = S.round ? 'rend' : 'lobby';
     if (S.phase === 'rend') S.board = boardData(false);
+    if (play() && me) { S.me = me.id; const recv = Player.bootLocal(S.room, me, o => setTimeout(() => onMsg(o))); local = recv }
     render();
     net = new Net(S.room, 'host', onMsg, (st, n) => { const ch = st !== S.net || n !== S.nl; S.net = st; S.nl = n; const d = $('.net'); if (d) d.className = 'net ' + st; if (ch && S.phase === 'lobby') { const l = $('.netline'); if (l) { l.className = 'netline ' + st; l.textContent = netText() } } });
     const i = await net.connectAll();
@@ -4900,7 +4935,7 @@ const Player = (() => {
   const LSK = 'lamma_me_v1';
   let me = {}; try { me = JSON.parse(localStorage.getItem(LSK) || '{}') } catch (e) { }
   const saveMe = () => { try { localStorage.setItem(LSK, JSON.stringify(me)) } catch (e) { } };
-  let net, root, room, bIdx = 0, st = null, joined = false, joinT = 0, key = '', q = null, qT0 = 0, my = null, raf = 0, preDone = false, orderSel = [], seqSel = [], numVal = '', netState = 'connecting', reflexGreen = false;
+  let isLocal = false, net, root, room, bIdx = 0, st = null, joined = false, joinT = 0, key = '', q = null, qT0 = 0, my = null, raf = 0, preDone = false, orderSel = [], seqSel = [], numVal = '', netState = 'connecting', reflexGreen = false;
   const $ = s => root.querySelector(s);
   const pnow = () => performance.now();
 
@@ -4911,6 +4946,29 @@ const Player = (() => {
     root.addEventListener('pointerdown', onDown, { passive: false });
     if (me.room === room && me.name && me.id) { startNet(); renderWait() }
     else renderJoin();
+  }
+  function hostJoin(onDone) {
+    root = document.getElementById('app'); root.className = 'phone';
+    const av = me.av || U.pick(AVATARS);
+    root.innerHTML = `<section class="join"><div class="brand"><span class="logo">لمّة</span><span>تحدّي العائلة</span></div>
+      <h1>أنت المضيف</h1><p>ستلعب مع العائلة من هذا الجوال، وتبدأ اللعبة متى اكتمل الجميع.</p>
+      <form id="jf"><label>اسمك<input id="nm" maxlength="16" autocomplete="nickname" placeholder="مثلًا: أبو محمد" value="${U.esc(me.name || '')}" required></label>
+      <p class="lbl">اختر شخصيتك</p><div class="avpick">${AVATARS.map(a => `<button type="button" class="${a === av ? 'on' : ''}" data-av="${a}">${a}</button>`).join('')}</div>
+      <button class="go" type="submit">أنشئ اللعبة</button></form></section>`;
+    me.av = av;
+    root.querySelectorAll('.avpick button').forEach(b => b.onclick = () => { root.querySelectorAll('.avpick button').forEach(x => x.classList.toggle('on', x === b)); me.av = b.dataset.av });
+    $('#jf').addEventListener('submit', e => { e.preventDefault(); AU.init(); const n = $('#nm').value.replace(/\s+/g, ' ').trim(); if (!n) return; me = { ...me, name: n.slice(0, 16), id: me.id || ('p' + U.uid(11)) }; saveMe(); onDone({ id: me.id, name: me.name, av: me.av }) });
+  }
+  function bootLocal(code, meIn, send) {
+    root = document.getElementById('app'); room = code; isLocal = true;
+    if (meIn.name) me = { ...me, ...meIn };
+    else if (me.id !== meIn.id) me = { id: meIn.id, name: 'المضيف', av: AVATARS[0] };
+    me.room = room; saveMe();
+    root.addEventListener('click', onClick); root.addEventListener('pointerdown', onDown, { passive: false });
+    net = { send }; netState = 'online';
+    sendJoin(); clearInterval(joinT);
+    joinT = setInterval(() => { if (!joined) sendJoin(); else net.send({ t: 'hi', id: me.id }) }, 2500);
+    return onMsg;
   }
   function renderJoin(err) {
     const av = me.av || U.pick(AVATARS);
@@ -4939,7 +4997,7 @@ const Player = (() => {
   function waitText() { if (joined) return 'بانتظار المضيف ليبدأ. أبقِ الصفحة مفتوحة.'; if (netState === 'searching') return `نبحث عن الشاشة الرئيسية (الرمز ${room})… تأكد أن صفحة المضيف مفتوحة.`; if (netState === 'fail') return 'تعذّر الاتصال. تأكد من الإنترنت.'; return 'جارٍ الاتصال بالشاشة الرئيسية…' }
   function renderWait(msg) {
     const ps = st && st.ps ? st.ps : [];
-    root.innerHTML = bar() + `<section class="center wait"><div class="bigav">${me.av}</div><h2>${joined ? 'أنت داخل اللعبة!' : 'جارٍ الدخول…'}</h2><p>${msg || waitText()}</p>${ps.length ? `<div class="mini">${ps.map(p => `<span>${p.av} ${U.esc(p.name)}</span>`).join('')}</div>` : ''}<button class="linkbtn" data-act="rename">تغيير الاسم أو الشخصية</button></section>`;
+    root.innerHTML = bar() + `<section class="center wait"><div class="bigav">${me.av}</div><h2>${joined ? 'أنت داخل اللعبة!' : 'جارٍ الدخول…'}</h2><p>${msg || waitText()}</p>${ps.length ? `<div class="mini">${ps.map(p => `<span>${p.av} ${U.esc(p.name)}</span>`).join('')}</div>` : ''}${isLocal ? '' : '<button class="linkbtn" data-act="rename">تغيير الاسم أو الشخصية</button>'}</section>`;
   }
 
   function onMsg(m) {
@@ -4962,6 +5020,7 @@ const Player = (() => {
   function draw(m) {
     cancelAnimationFrame(raf);
     const ph = m.ph;
+    if (isLocal) { if (ph === 'lobby') return; root.className = 'phone' }
     if (ph === 'lobby') return renderWait();
     if (!joined) return renderWait('اللعبة بدأت، ستدخل مع السؤال القادم…');
     if (ph === 'intro') { root.innerHTML = bar() + `<section class="center intro"><p>استعد لـ</p><h1>الجولة ${U.ar(m.r)}</h1><p>١٠ أسئلة منوعة</p></section>`; return }
@@ -4979,7 +5038,7 @@ const Player = (() => {
     if (showMedia) {
       if (q.media.k === 'diff') media = renderMedia(q.media, { tap: q.input === 'tap' });
       else media = renderMedia(q.media, { tap: q.input === 'tap', player: 1 });
-    } else if (q.media && q.media.k === 'sound') media = renderMedia(q.media, { player: 1 });
+    } else if (q.media && q.media.k === 'sound') media = renderMedia(q.media, { player: 1, snd: q.snd });
     root.innerHTML = bar() + `<section class="pq in-${q.input} m-${q.media ? q.media.k : 'none'}">
       <div class="qhead"><span class="badge">${U.esc(q.cat)}</span>${q.golden ? '<span class="badge gold">×٢</span>' : ''}<span class="qn">${U.ar(m.n)}/${U.ar(m.of)}</span></div>
       <div class="tbar"><i></i></div>
@@ -4989,6 +5048,7 @@ const Player = (() => {
       <div class="pin ${q.pre ? 'hide' : ''}">${inputHTML()}</div>
       <div class="sent hide"></div></section>`;
     if (q.input === 'seq') simonShow(root, q, Date.now() - (pnow() - qT0));
+    if (q.snd && q.sound) { AU.init(); AU.on = true; AU.play(q.sound, i => { const e = root.querySelector(`.tonelbl [data-t="${i}"]`); if (e) { e.classList.add('on'); setTimeout(() => e.classList.remove('on'), 520) } }, (m.el || 0) / 1000) }
     loop();
   }
   function inputHTML() {
@@ -5069,7 +5129,9 @@ const Player = (() => {
     }
     root.innerHTML = bar() + `<section class="prev ${cls}"><div class="verdict"><h1>${head}</h1>${r && r.p ? `<p class="pts">+${U.ar(r.p)}${R.golden ? ' <small>(ذهبي ×٢)</small>' : ''}</p>` : ''}${r && r.b ? `<p class="streak">سلسلة ${U.ar(r.st)} إجابات! +${U.ar(100)}</p>` : ''}${R.fastest === me.id ? '<p class="fast">أنت الأسرع!</p>' : ''}</div>
       ${right}${R.note ? `<p class="note">${U.esc(R.note)}</p>` : ''}
-      <div class="myrank"><span>مركزك</span><b>${U.ar(rank)}</b><span>من ${U.ar(m.ps.length)}، ${U.ar(mine ? mine.score : 0)} نقطة</span></div></section>`;
+      <div class="myrank"><span>مركزك</span><b>${U.ar(rank)}</b><span>من ${U.ar(m.ps.length)}، ${U.ar(mine ? mine.score : 0)} نقطة</span></div>
+      ${R.fastest && R.fastest !== me.id && m.ps.find(p => p.id === R.fastest) ? `<p class="fastline">الأسرع: ${m.ps.find(p => p.id === R.fastest).av} ${U.esc(m.ps.find(p => p.id === R.fastest).name)}</p>` : ''}
+      <ol class="ptable top5">${m.ps.slice(0, 5).map((p, i) => `<li class="${p.id === me.id ? 'me' : ''}"><span>${U.ar(i + 1)}</span><i>${p.av}</i><em>${U.esc(p.name)}</em>${R.res[p.id] && R.res[p.id].p ? `<small>+${U.ar(R.res[p.id].p)}</small>` : ''}<b>${U.ar(p.score)}</b></li>`).join('')}</ol></section>`;
   }
   function renderBoard(m) {
     const b = m.board; const rank = b.all.findIndex(p => p.id === me.id) + 1;
@@ -5081,7 +5143,7 @@ const Player = (() => {
       <ol class="ptable">${b.all.slice(0, 8).map((p, i) => `<li class="${p.id === me.id ? 'me' : ''}"><span>${U.ar(i + 1)}</span><i>${p.av}</i><em>${U.esc(p.name)}</em><b>${U.ar(p.score)}</b></li>`).join('')}</ol>
       <p class="sub">${fin ? 'شكرًا للعب!' : 'بانتظار المضيف لبدء الجولة التالية…'}</p></section>`;
   }
-  return { boot };
+  return { boot, bootLocal, hostJoin };
 })();
 
 /* main.js */
@@ -5108,19 +5170,27 @@ function Landing() {
     <div class="hero"><span class="logo big">لمّة</span><h1>تحدّي اللمّة</h1><p>لعبة أسئلة عائلية: شاشة واحدة تعرض الأسئلة، وكل واحد يجيب من جواله. ثقافة وألغاز وشعر وأعلام وخرائط وأصوات وسرعة بديهة، في جولات من عشرة أسئلة.</p>
       <ul class="how"><li><b>١</b>افتح «ابدأ لعبة» على التلفاز أو اللابتوب</li><li><b>٢</b>يمسح الجميع الباركود ويكتبون أسماءهم</li><li><b>٣</b>الأسرع في الإجابة الصحيحة يكسب نقاطًا أكثر</li></ul></div>
     <div class="cards">
-      <button class="card hostc" data-go="host"><b>ابدأ لعبة جديدة (المضيف)</b><span>على الشاشة التي سيراها الجميع، وتحتاج رمز المضيف</span></button>
-      ${sv ? `<button class="card" data-go="resume"><b>أكمل اللعبة السابقة</b><span>الرمز ${U.esc(sv.room)}، ${U.ar(Object.keys(sv.players).length)} لاعبين، بعد الجولة ${U.ar(sv.round)}</span></button>` : ''}
+      <button class="card hostc" data-go="hostplay"><b>أنا المضيف</b><span>أنشئ اللعبة من جوالك والعب مع العائلة (يحتاج الرمز السري)</span></button>
+      ${sv ? `<button class="card" data-go="resume"><b>أكمل اللعبة السابقة${sv.mode === 'play' ? ' (أنت المضيف)' : ''}</b><span>الرمز ${U.esc(sv.room)}، ${U.ar(Object.keys(sv.players).length)} لاعبين، بعد الجولة ${U.ar(sv.round)}</span></button>` : ''}
+      <button class="card" data-go="host"><b>شاشة عرض كبيرة</b><span>اعرض الأسئلة على تلفاز أو لابتوب، والجميع يجيب من الجوالات (يحتاج الرمز السري)</span></button>
       <form class="card joinf"><b>انضم كلاعب</b><span>اكتب رمز الغرفة الظاهر على الشاشة</span><div class="row"><input id="code" maxlength="5" autocomplete="off" autocapitalize="characters" dir="ltr" placeholder="ABCDE"><button class="go sm">دخول</button></div></form>
     </div></section>`;
   const gate = f => () => { AU.init(); pinOK() ? f() : askPin(f) };
   root.querySelector('[data-go="host"]').onclick = gate(() => { history.replaceState(null, '', location.pathname + '?host' + (QS.get('broker') ? '&broker=' + encodeURIComponent(QS.get('broker')) : '')); Host.boot(false) });
-  const r = root.querySelector('[data-go="resume"]'); if (r) r.onclick = gate(() => { history.replaceState(null, '', location.pathname + '?host' + (QS.get('broker') ? '&broker=' + encodeURIComponent(QS.get('broker')) : '')); Host.boot(true) });
+  const bq = () => QS.get('broker') ? '&broker=' + encodeURIComponent(QS.get('broker')) : '';
+  root.querySelector('[data-go="hostplay"]').onclick = gate(() => Player.hostJoin(me => { history.replaceState(null, '', location.pathname + '?host&mode=play' + bq()); Host.boot(false, 'play', me) }));
+  const r = root.querySelector('[data-go="resume"]'); if (r) r.onclick = gate(() => { const m = sv.mode || 'board'; history.replaceState(null, '', location.pathname + '?host' + (m === 'play' ? '&mode=play' : '') + bq()); Host.boot(true, m, m === 'play' ? { id: sv.me } : null) });
   root.querySelector('.joinf').onsubmit = e => { e.preventDefault(); const c = root.querySelector('#code').value.trim().toUpperCase(); if (c.length >= 4) location.href = location.pathname + '?join=' + encodeURIComponent(c) + (QS.get('broker') ? '&broker=' + encodeURIComponent(QS.get('broker')) : '') };
 }
 (function () {
   const j = QS.get('join');
   if (j) Player.boot(j.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6), +QS.get('b') || 0);
-  else if (QS.has('host') && pinOK()) Host.boot(!!Host.saved() && QS.has('resume'));
+  else if (QS.has('host') && pinOK()) {
+    const sv = Host.saved(), mode = QS.get('mode') === 'play' ? 'play' : 'board';
+    let tab = null; try { tab = sessionStorage.getItem('lamma_tab') } catch (e) { }
+    if (mode === 'play') { if (tab && sv && sv.mode === 'play' && sv.me) Host.boot(true, 'play', { id: sv.me }); else Player.hostJoin(me => Host.boot(false, 'play', me)) }
+    else Host.boot(false, 'board');
+  }
   else Landing();
 })();
 

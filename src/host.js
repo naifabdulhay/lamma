@@ -2,8 +2,10 @@
 const Host = (() => {
   const SAVE = 'lamma_host_v1';
   const S = { room: null, b: 0, players: {}, phase: 'lobby', round: 0, qn: 0, qs: [], q: null, qStart: 0, ans: {}, rev: null, board: null, limitMs: 0, ver: 0, net: 'connecting',
-    settings: { fams: {}, speed: 1, sfx: true, tts: false, auto: true } };
-  let net, root, timers = [], raf = 0, pubT = 0, preDone = false, lastTick = -1;
+    settings: { fams: {}, speed: 1, sfx: true, tts: false, auto: true }, mode: 'board', me: null };
+  let net, root, bar = null, local = null, timers = [], raf = 0, pubT = 0, preDone = false, lastTick = -1;
+  const play = () => S.mode === 'play';
+  const sfx = n => { if (play() && n !== 'pop') return; AU.sfx(n) };
   const $ = s => root.querySelector(s);
   const now = () => Date.now();
   const plist = () => Object.values(S.players);
@@ -13,17 +15,19 @@ const Host = (() => {
   const clearT = () => { timers.forEach(clearTimeout); timers = [] };
   const joinURL = () => location.origin + location.pathname + '?join=' + S.room + '&b=' + S.b + (QS.get('broker') ? '&broker=' + encodeURIComponent(QS.get('broker')) : '');
 
-  function save() { try { localStorage.setItem(SAVE, JSON.stringify({ at: now(), room: S.room, b: S.b, players: S.players, round: S.round, settings: S.settings })) } catch (e) { } }
+  function save() { try { localStorage.setItem(SAVE, JSON.stringify({ at: now(), room: S.room, b: S.b, players: S.players, round: S.round, settings: S.settings, mode: S.mode, me: S.me })) } catch (e) { } }
   function saved() { try { const s = JSON.parse(localStorage.getItem(SAVE) || 'null'); if (s && now() - s.at < 8 * 3600e3 && Object.keys(s.players || {}).length) return s } catch (e) { } return null }
 
   /* ---------- network ---------- */
   function publish() {
     const o = { t: 'st', ph: S.phase, room: S.room, r: S.round, n: S.qn, of: S.qs.length || 10, v: S.ver, ps: ranked().filter(p => !p.bot).map(p => ({ id: p.id, name: p.name, av: p.av, score: p.score })) };
     if (S.phase === 'ready' && S.q) o.q = { id: S.q.id, cat: S.q.cat, golden: !!S.q.golden };
-    if (S.phase === 'q') { const { ans, note, sound, marks, ...pub } = S.q; o.q = pub; o.el = now() - S.qStart; o.got = Object.keys(S.ans); o.lim = S.limitMs }
+    if (S.phase === 'q') { const { ans, note, sound, marks, ...pub } = S.q; o.q = pub; if (play() && sound) { o.q.sound = sound; o.q.snd = 1 } o.el = now() - S.qStart; o.got = Object.keys(S.ans); o.lim = S.limitMs }
+    o.host = S.me || null;
     if (S.phase === 'rev') o.rev = S.rev;
     if (S.phase === 'rend' || S.phase === 'final') o.board = S.board;
     net && net.send(o);
+    if (local) { const c = JSON.parse(JSON.stringify(o)); setTimeout(() => local(c)) }
   }
   const publishSoon = () => { clearTimeout(pubT); pubT = setTimeout(publish, 120) };
   function onMsg(m) {
@@ -35,7 +39,7 @@ const Host = (() => {
       if (!p) {
         if (plist().length >= 40) return;
         S.players[m.id] = p = { id: m.id, name, av, score: 0, streak: 0, best: 0, correct: 0, answered: 0, fast: 0, rs: 0, seen: now() };
-        AU.sfx('pop'); toast(`${av} ${name} دخل اللعبة`);
+        sfx('pop'); if (!play()) toast(`${av} ${name} دخل اللعبة`);
       } else { p.name = name; p.av = av; p.seen = now() }
       S.ver++; publish(); refreshPlayers(); save(); return;
     }
@@ -64,7 +68,7 @@ const Host = (() => {
   function nextRound() {
     clearT(); AU.init();
     S.round++; S.qn = 0; S.qs = QG.round(S.round, S.settings.fams); plist().forEach(p => p.rs = 0);
-    S.phase = 'intro'; S.ver++; render(); publish(); AU.sfx('fanfare');
+    S.phase = 'intro'; S.ver++; render(); publish(); sfx('fanfare');
     later(3400, nextQ);
   }
   function nextQ() {
@@ -72,7 +76,7 @@ const Host = (() => {
     if (S.qn >= S.qs.length) return roundEnd();
     S.q = S.qs[S.qn]; S.qn++;
     S.phase = 'ready'; S.ver++; render(); publish();
-    AU.sfx(S.q.golden ? 'gold' : 'whoosh');
+    sfx(S.q.golden ? 'gold' : 'whoosh');
     later(S.q.golden ? 3300 : 2400, startQ);
   }
   function startQ() {
@@ -81,11 +85,11 @@ const Host = (() => {
     S.phase = 'q'; S.ans = {}; S.qStart = now(); preDone = !q.pre; lastTick = -1;
     S.limitMs = Math.round(q.time * 1000 * (q.input === 'reflex' ? 1 : S.settings.speed));
     S.ver++; render(); publish();
-    if (q.sound) AU.play(q.sound, i => { const e = root.querySelector(`.tonelbl [data-t="${i}"]`); if (e) { e.classList.add('on'); setTimeout(() => e.classList.remove('on'), 520) } });
-    if (q.input === 'seq') simonShow(root, q, S.qStart);
-    if (S.settings.tts && 'speechSynthesis' in window && !q.sound) { try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(q.prompt.replace(/[()]/g, '')); u.lang = 'ar-SA'; u.rate = 1.02; speechSynthesis.speak(u) } catch (e) { } }
+    if (q.sound && !play()) AU.play(q.sound, i => { const e = root.querySelector(`.tonelbl [data-t="${i}"]`); if (e) { e.classList.add('on'); setTimeout(() => e.classList.remove('on'), 520) } });
+    if (q.input === 'seq' && !play()) simonShow(root, q, S.qStart);
+    if (S.settings.tts && !play() && 'speechSynthesis' in window && !q.sound) { try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(q.prompt.replace(/[()]/g, '')); u.lang = 'ar-SA'; u.rate = 1.02; speechSynthesis.speak(u) } catch (e) { } }
     later(q.pre + S.limitMs + 900, endQ);
-    loop();
+    if (!play()) loop();
     plist().filter(p => p.bot).forEach(p => botPlay(p, q));
   }
   function botPlay(p, q) {
@@ -142,7 +146,7 @@ const Host = (() => {
     let counts = null;
     if (q.input === 'choice') { counts = q.opts.map(() => 0); Object.values(S.ans).forEach(x => { if (typeof x.a === 'number' && counts[x.a] != null) counts[x.a]++ }) }
     S.rev = { qid: q.id, input: q.input, ans: q.ans, note: q.note || null, res, fastest, counts, marks: q.marks || null, golden: !!q.golden };
-    S.phase = 'rev'; S.ver++; render(); publish(); AU.sfx('reveal');
+    S.phase = 'rev'; S.ver++; render(); publish(); sfx('reveal');
     if (S.settings.auto) later(q.note ? 9000 : 7500, nextQ);
     save();
   }
@@ -160,8 +164,8 @@ const Host = (() => {
     return b;
   }
   function times(n) { return n === 1 ? 'مرة واحدة' : n === 2 ? 'مرتان' : U.ar(n) + (n <= 10 ? ' مرات' : ' مرة') }
-  function roundEnd() { clearT(); S.phase = 'rend'; S.board = boardData(false); S.ver++; render(); publish(); AU.sfx('fanfare'); save() }
-  function finish() { clearT(); stopLoop(); S.phase = 'final'; S.board = boardData(true); S.ver++; render(); publish(); AU.sfx('fanfare'); confetti(); save() }
+  function roundEnd() { clearT(); S.phase = 'rend'; S.board = boardData(false); S.ver++; render(); publish(); sfx('fanfare'); save() }
+  function finish() { clearT(); stopLoop(); S.phase = 'final'; S.board = boardData(true); S.ver++; render(); publish(); sfx('fanfare'); if (!play()) confetti(); save() }
   function toLobby() { clearT(); stopLoop(); S.phase = 'lobby'; S.round = 0; S.qn = 0; S.qs = []; plist().forEach(p => Object.assign(p, { score: 0, streak: 0, best: 0, correct: 0, answered: 0, fast: 0, rs: 0 })); S.ver++; render(); publish() }
 
   /* ---------- timer loop ---------- */
@@ -171,7 +175,7 @@ const Host = (() => {
     if (q.input === 'reflex') { const pad = $('.reflex'); if (pad && el >= q.d && !pad.classList.contains('go')) { pad.classList.add('go'); pad.querySelector('span').textContent = 'الآن!'; AU.sfx('go') } }
     const left = q.pre + S.limitMs - el, frac = U.clamp(left / S.limitMs, 0, 1);
     const ring = $('.ring .fg'); if (ring) ring.style.strokeDashoffset = String(283 * (1 - (el < q.pre ? 1 : frac)));
-    const tn = $('.ring b'); if (tn) { const s = Math.max(0, Math.ceil(left / 1000)); tn.textContent = el < q.pre ? '…' : U.ar(s); if (el >= q.pre && s <= 5 && s !== lastTick && s > 0 && q.input !== 'reflex') { lastTick = s; AU.sfx('tick') } $('.ring')?.classList.toggle('hot', el >= q.pre && s <= 5) }
+    const tn = $('.ring b'); if (tn) { const s = Math.max(0, Math.ceil(left / 1000)); tn.textContent = el < q.pre ? '…' : U.ar(s); if (el >= q.pre && s <= 5 && s !== lastTick && s > 0 && q.input !== 'reflex') { lastTick = s; sfx('tick') } $('.ring')?.classList.toggle('hot', el >= q.pre && s <= 5) }
     const pb = $('.prebar i'); if (pb) pb.style.width = (100 * U.clamp(1 - el / q.pre, 0, 1)) + '%';
     raf = requestAnimationFrame(loop);
   }
@@ -182,7 +186,7 @@ const Host = (() => {
     const pb = $('.prebar'); if (pb) pb.remove();
     const o = $('.opts'); if (o) o.classList.remove('hide');
     const h = $('.hint'); if (h) h.classList.remove('hide');
-    AU.sfx('go');
+    sfx('go');
   }
 
   /* ---------- rendering ---------- */
@@ -202,6 +206,7 @@ const Host = (() => {
   }
   function render() {
     const ph = S.phase; let body = '';
+    if (play()) { renderBar(); if (ph !== 'lobby') return; root.className = 'host play'; root.innerHTML = `<main class="stage ph-lobby">${lobby()}</main><div id="toasts"></div>`; return }
     if (ph === 'lobby') body = lobby();
     else if (ph === 'intro') body = `<section class="intro pop"><p>استعدوا لـ</p><h1>الجولة ${U.ar(S.round)}</h1><div class="introtypes">${S.qs.map(q => `<span>${U.esc(q.cat)}</span>`).join('')}</div><p class="sub">١٠ أسئلة، السؤال الأخير ذهبي بضعف النقاط</p></section>`;
     else if (ph === 'ready') body = `<section class="ready pop ${S.q.golden ? 'gold' : ''}"><div class="qnum">${U.ar(S.qn)}</div><h2>${S.q.golden ? 'السؤال الذهبي، النقاط مضاعفة' : 'السؤال التالي'}</h2><div class="badge big">${U.esc(S.q.cat)}</div></section>`;
@@ -220,10 +225,10 @@ const Host = (() => {
     return `<section class="lobby">
       <div class="joincard"><h2>امسحوا الباركود بكاميرا الجوال</h2><div class="qr">${qr}</div>
         <div class="code"><span>أو ادخلوا بالرمز</span><b>${S.room}</b></div>
-        <p class="url" dir="ltr">${U.esc(joinURL().replace(/^https?:\/\//, ''))}</p>
+        <p class="url" dir="ltr">${U.esc(joinURL().replace(/^https?:\/\//, ''))}</p><button class="ghost sm" data-act="share">مشاركة رابط الدخول</button>
         ${location.protocol === 'file:' ? '<p class="warn">الملف مفتوح من جهازك، لذا لن تفتح الجوالات الرابط. ارفعه على رابط إنترنت أولًا (الطريقة في رسالة التسليم).</p>' : ''}
         <p class="netline ${S.net}">${netText()}</p></div>
-      <div class="side"><h1 class="title">تحدّي<br>اللمّة</h1><p class="lead">كل واحد يجيب من جواله. جولات من ١٠ أسئلة منوعة، والأسرع يكسب نقاطًا أكثر.</p>
+      <div class="side">${play() ? '<h1 class="title sm">أنت المضيف</h1><p class="lead">انتظر حتى يدخل الجميع ثم اضغط «انطلق». ستلعب معهم من هذا الجوال.</p>' : '<h1 class="title">تحدّي<br>اللمّة</h1><p class="lead">كل واحد يجيب من جواله. جولات من ١٠ أسئلة منوعة، والأسرع يكسب نقاطًا أكثر.</p>'}
         <div class="plist" id="plist">${playersHTML()}</div>
         <details class="settings"><summary>إعدادات اللعبة</summary>
           <p class="lbl">أنواع الأسئلة</p><div class="chips">${Object.entries(fams).map(([k, f]) => `<button class="chip ${S.settings.fams[k] === false ? '' : 'on'}" data-fam="${k}">${f.ar}</button>`).join('')}</div>
@@ -233,19 +238,19 @@ const Host = (() => {
           <label class="tog"><input type="checkbox" data-set="auto" ${S.settings.auto ? 'checked' : ''}> الانتقال التلقائي بين الأسئلة</label>
           <button class="linkbtn" data-act="resetused">تصفير الأسئلة المستخدمة (${U.ar(QG.usedCount())})</button>
         </details>
-        <div class="golist"><button class="go" data-act="start" ${plist().length ? '' : 'disabled'}>ابدأ اللعب</button><button class="linkbtn" data-act="bot">+ لاعب تجريبي (للتجربة)</button></div>
+        <div class="golist"><button class="go" data-act="start" ${plist().length ? '' : 'disabled'}>${play() ? 'انطلق' : 'ابدأ اللعب'}</button><button class="linkbtn" data-act="bot">+ لاعب تجريبي (للتجربة)</button></div>
       </div></section>`;
   }
   function netText() { return ({ online: `متصل وجاهز لاستقبال اللاعبين (${S.nl > 2 ? 'عبر ' + U.ar(S.nl) + ' خوادم ربط' : S.nl === 2 ? 'عبر خادمَي ربط' : 'عبر خادم ربط واحد'})`, connecting: 'جارٍ الاتصال…', offline: 'انقطع الاتصال، نعيد المحاولة…', fail: 'تعذّر الاتصال بخوادم الربط. تأكد من الإنترنت ثم حدّث الصفحة.' })[S.net] || '' }
   function playersHTML() {
     const ps = plist();
     if (!ps.length) return `<p class="empty">بانتظار أول لاعب… كل من يمسح الباركود يظهر اسمه هنا.</p>`;
-    return `<p class="count">${U.ar(ps.length)} ${ps.length === 1 ? 'لاعب' : ps.length === 2 ? 'لاعبان' : ps.length <= 10 ? 'لاعبين' : 'لاعبًا'} — اضغط على اسم لإزالته</p><div class="avs">${ps.map(p => `<button class="pchip ${alive(p) ? '' : 'off'}" data-kick="${p.id}"><i>${p.av}</i>${U.esc(p.name)}${p.bot ? ' <small>تجريبي</small>' : ''}</button>`).join('')}</div>`;
+    return `<p class="count">${U.ar(ps.length)} ${ps.length === 1 ? 'لاعب' : ps.length === 2 ? 'لاعبان' : ps.length <= 10 ? 'لاعبين' : 'لاعبًا'} — اضغط على اسم لإزالته</p><div class="avs">${ps.map(p => p.id === S.me ? `<span class="pchip me"><i>${p.av}</i>${U.esc(p.name)} <small>المضيف</small></span>` : `<button class="pchip ${alive(p) ? '' : 'off'}" data-kick="${p.id}"><i>${p.av}</i>${U.esc(p.name)}${p.bot ? ' <small>تجريبي</small>' : ''}</button>`).join('')}</div>`;
   }
   function refreshPlayers() { const e = $('#plist'); if (e) e.innerHTML = playersHTML(); const g = $('[data-act="start"]'); if (g) g.disabled = !plist().length; if (S.phase === 'q') { const st = $('.strip'); if (st) st.innerHTML = stripHTML() } }
   function wireLobby() { }
   const stripHTML = () => { const ps = plist(); const n = Object.keys(S.ans).length; return `<span class="cnt">${U.ar(n)}/${U.ar(ps.length)} أجابوا</span>${ps.map(p => avatar(p, S.ans[p.id] ? 'in' : '')).join('')}` };
-  function markIn(id) { const e = root.querySelector(`.strip .av[data-id="${id}"]`); if (e) e.classList.add('in'); const c = $('.strip .cnt'); if (c) c.textContent = `${U.ar(Object.keys(S.ans).length)}/${U.ar(plist().length)} أجابوا`; AU.sfx('tock') }
+  function markIn(id) { if (bar) { const c = bar.querySelector('.cnt'); if (c) c.textContent = `أجاب ${U.ar(Object.keys(S.ans).length)} من ${U.ar(plist().length)}` } if (play()) return; const e = root.querySelector(`.strip .av[data-id="${id}"]`); if (e) e.classList.add('in'); const c = $('.strip .cnt'); if (c) c.textContent = `${U.ar(Object.keys(S.ans).length)}/${U.ar(plist().length)} أجابوا`; AU.sfx('tock') }
 
   function qScreen(rev) {
     const q = S.q, R = S.rev;
@@ -328,6 +333,7 @@ const Host = (() => {
       case 'auto': S.settings.auto = !S.settings.auto; t.textContent = S.settings.auto ? 'انتقال تلقائي' : 'انتقال يدوي'; if (S.settings.auto && S.phase === 'rev') later(2500, nextQ); save(); break;
       case 'fs': try { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen() } catch (e) { } break;
       case 'resetused': QG.resetUsed(); t.textContent = 'تم تصفير الأسئلة المستخدمة'; break;
+      case 'share': { const u = joinURL(); if (navigator.share) navigator.share({ title: 'تحدّي اللمّة', text: 'ادخل لعبة تحدّي اللمّة (الرمز ' + S.room + ')', url: u }).catch(() => { }); else if (navigator.clipboard) navigator.clipboard.writeText(u).then(() => toast('تم نسخ رابط الدخول'), () => { }); break }
     }
   }
   function onChange(e) { const k = e.target.dataset.set; if (!k) return; S.settings[k] = e.target.checked; if (k === 'sfx') AU.on = e.target.checked; save() }
@@ -337,19 +343,34 @@ const Host = (() => {
     if (e.key === 'f' || e.key === 'F') onClick({ target: Object.assign(document.createElement('button'), { dataset: { act: 'fs' } }) });
   }
 
-  async function boot(resume) {
+  function renderBar() {
+    if (!bar) return; const ph = S.phase; let h = '';
+    const end = `<button class="tb" data-act="end">إنهاء اللعبة</button>`;
+    if (ph === 'lobby') h = '';
+    else if (ph === 'intro' || ph === 'ready') h = `<span class="lbl">المضيف</span>${end}`;
+    else if (ph === 'q') h = `<span class="cnt">أجاب ${U.ar(Object.keys(S.ans).length)} من ${U.ar(plist().length)}</span><button class="tb" data-act="skip">إنهاء السؤال</button>`;
+    else if (ph === 'rev') h = `<button class="tb pri" data-act="next">التالي ←</button><button class="tb" data-act="auto">${S.settings.auto ? 'انتقال تلقائي' : 'انتقال يدوي'}</button>${end}`;
+    else if (ph === 'rend') h = `<button class="tb pri" data-act="nextround">الجولة ${U.ar(S.round + 1)} ←</button>${end}`;
+    else if (ph === 'final') h = `<button class="tb pri" data-act="again">لعبة جديدة</button>`;
+    bar.innerHTML = h; bar.classList.toggle('hide', !h); document.body.classList.toggle('hasbar', !!h);
+  }
+  async function boot(resume, mode = 'board', me = null) {
     root = document.getElementById('app'); root.className = 'host';
+    S.mode = mode;
+    if (play()) { bar = document.createElement('div'); bar.id = 'hostbar'; bar.className = 'hostbar hide'; document.body.appendChild(bar); bar.addEventListener('click', onClick) }
     let tab = null; try { tab = sessionStorage.getItem('lamma_tab') } catch (e) { }
     const sv = (resume || tab) ? saved() : null;
     try { sessionStorage.setItem('lamma_tab', '1') } catch (e) { }
-    if (sv) { S.room = sv.room; S.b = sv.b; S.players = sv.players; S.round = sv.round; S.settings = Object.assign(S.settings, sv.settings); plist().forEach(p => p.seen = now()) }
+    if (sv && (sv.mode || 'board') !== mode) { /* different mode: start fresh */ }
+    if (sv && (sv.mode || 'board') === mode) { S.room = sv.room; S.b = sv.b; S.players = sv.players; S.round = sv.round; S.settings = Object.assign(S.settings, sv.settings); if (play() && sv.me) me = me || { id: sv.me }; plist().forEach(p => p.seen = now()) }
     else S.room = U.uid(5).toUpperCase().replace(/[^A-Z0-9]/g, 'X');
     AU.on = S.settings.sfx;
     root.addEventListener('click', onClick); root.addEventListener('change', onChange); document.addEventListener('keydown', onKey);
     const wake = () => { try { navigator.wakeLock && document.visibilityState === 'visible' && navigator.wakeLock.request('screen').catch(() => { }) } catch (e) { } };
     wake(); document.addEventListener('visibilitychange', wake);
-    S.phase = sv && S.round ? 'rend' : 'lobby';
+    S.phase = S.round ? 'rend' : 'lobby';
     if (S.phase === 'rend') S.board = boardData(false);
+    if (play() && me) { S.me = me.id; const recv = Player.bootLocal(S.room, me, o => setTimeout(() => onMsg(o))); local = recv }
     render();
     net = new Net(S.room, 'host', onMsg, (st, n) => { const ch = st !== S.net || n !== S.nl; S.net = st; S.nl = n; const d = $('.net'); if (d) d.className = 'net ' + st; if (ch && S.phase === 'lobby') { const l = $('.netline'); if (l) { l.className = 'netline ' + st; l.textContent = netText() } } });
     const i = await net.connectAll();

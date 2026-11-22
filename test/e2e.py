@@ -124,4 +124,5 @@ async def main():
         print('questions played', qcount)
         print('ERRORS', len(errors)); print('\n'.join(errors[:30]))
         await b.close()
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
